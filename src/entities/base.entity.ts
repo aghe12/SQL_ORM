@@ -31,11 +31,20 @@ export abstract class BaseEntity implements IBaseEntity {
 
   // TASK: update this to insert / update
   async save(): Promise<void> {
-    const keys = Object.keys(this);
-    const columns = keys.join(", ");
-    const values_placeholder = "?, ".repeat(keys.length).slice(0, -2);
-    const query = `INSERT INTO ${(this.constructor as typeof BaseEntity).getTableName()} (${columns}) VALUES (${values_placeholder})`;
-    // await db.execute(query, Object.values(this));
+    if (!this.id) {
+      const keys = Object.keys(this);
+      const columns = keys.join(", ");
+      const values_placeholder = "?, ".repeat(keys.length).slice(0, -2);
+      const query = `INSERT INTO ${(this.constructor as typeof BaseEntity).getTableName()} (${columns}) VALUES (${values_placeholder})`;
+      // await db.execute(query, Object.values(this));
+      console.log(query);
+    } else {
+      const keys = Object.keys(this).filter(key => key !== 'id');
+      const setClause = keys.map(key => `${key} = ?`).join(", ");
+      const query = `UPDATE ${(this.constructor as typeof BaseEntity).getTableName()} SET ${setClause} WHERE id = ?`;
+      // await db.execute(query, [...Object.values(this).filter((_, index) => index !== 0), this.id]);
+      console.log(query);
+    }
   }
 
   static async findById<T extends BaseEntity, I extends IBaseEntity>(

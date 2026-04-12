@@ -73,5 +73,29 @@ export abstract class BaseEntity implements IBaseEntity {
     console.log(query);
     return null;
   }
+    static async deleteById<T extends BaseEntity, I extends IBaseEntity>(this: new (entity: I) => T, id: number): Promise<boolean> {
+    const query = `DELETE FROM ${Reflect.getMetadata(TABLE_METADATA_KEY, this)} WHERE id = ?`;
+    // const result = await db.execute(query, [id]);
+    // return result.affectedRows > 0;
+    console.log(query);
+    return true;
+  }
+
+  static async deleteAll<T extends BaseEntity, I extends IBaseEntity>(this: new (entity: I) => T): Promise<boolean> {
+    const query = `DELETE FROM ${Reflect.getMetadata(TABLE_METADATA_KEY, this)}`;
+    // const result = await db.execute(query);
+    // return result.affectedRows > 0;
+    console.log(query);
+    return true;
+  }
+
+  static async deleteOne<T extends BaseEntity, I extends IBaseEntity>(this: new (entity: I) => T, conditions: Partial<I>): Promise<boolean> {
+    const whereClause = Object.keys(conditions).map(key => `${key} = ?`).join(' AND ');
+    const query = `DELETE FROM ${Reflect.getMetadata(TABLE_METADATA_KEY, this)} WHERE ${whereClause}`;
+    // const result = await db.execute(query, Object.values(conditions));
+    // return result.affectedRows > 0;
+    console.log(query);
+    return true;
+  }
 
 }

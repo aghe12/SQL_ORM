@@ -37,13 +37,14 @@ export abstract class BaseEntity implements IBaseEntity {
       const values_placeholder = "?, ".repeat(keys.length).slice(0, -2);
       const query = `INSERT INTO ${(this.constructor as typeof BaseEntity).getTableName()} (${columns}) VALUES (${values_placeholder})`;
       await db.execute(query, Object.values(this));
-    
     } else {
-      const keys = Object.keys(this).filter(key => key !== 'id');
-      const setClause = keys.map(key => `${key} = ?`).join(", ");
+      const keys = Object.keys(this).filter((key) => key !== "id");
+      const setClause = keys.map((key) => `${key} = ?`).join(", ");
       const query = `UPDATE ${(this.constructor as typeof BaseEntity).getTableName()} SET ${setClause} WHERE id = ?`;
-      await db.execute(query, [...Object.values(this).filter((_, index) => index !== 0), this.id]);
-
+      await db.execute(query, [
+        ...Object.values(this).filter((_, index) => index !== 0),
+        this.id,
+      ]);
     }
   }
 
@@ -55,7 +56,6 @@ export abstract class BaseEntity implements IBaseEntity {
     const result = await db.execute(query, [id]);
     const instance = new this(result[0]);
     return instance;
-
   }
   // TASKS:
   // static async findAll<T extends BaseEntity, I extends IBaseEntity>(this: new (entity: I) => T): Promise<T[]>
@@ -66,7 +66,7 @@ export abstract class BaseEntity implements IBaseEntity {
   // static async deleteOne<T extends BaseEntity, I extends IBaseEntity>(this: new (entity: I) => T, conditions: Partial<I>): Promise<T | null>
 
   static async findAll<T extends BaseEntity, I extends IBaseEntity>(
-    this: new (entity: I) => T
+    this: new (entity: I) => T,
   ): Promise<T[]> {
     const query = `SELECT * FROM ${Reflect.getMetadata(TABLE_METADATA_KEY, this)}`;
     const result = await db.execute(query);
@@ -74,59 +74,53 @@ export abstract class BaseEntity implements IBaseEntity {
   }
 
   static async findOne<T extends BaseEntity, I extends IBaseEntity>(
-    this: new (entity: I) => T, conditions: Partial<I>
- ): Promise<T | null> {
-    const whereClause = Object.keys(conditions).map(key => `${key} = ?`).join(' AND ');
+    this: new (entity: I) => T,
+    conditions: Partial<I>,
+  ): Promise<T | null> {
+    const whereClause = Object.keys(conditions)
+      .map((key) => `${key} = ?`)
+      .join(" AND ");
     const query = `SELECT * FROM ${Reflect.getMetadata(TABLE_METADATA_KEY, this)} WHERE ${whereClause}`;
     const result = await db.execute(query, Object.values(conditions));
     return result.length > 0 ? new this(result[0]) : null;
   }
 
   static async deleteById<T extends BaseEntity, I extends IBaseEntity>(
-  this: new (entity: I) => T,
-  id: number
- ): Promise<T | null> {
-  const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
-  const select = `SELECT * FROM ${tableName} WHERE id = ?`;
-  const result = await db.execute(select, [id]);
-  if (!result.length) return null;
-  
-  const deleted = new this(result[0]);
-  
-  await db.execute(`DELETE FROM ${tableName} WHERE id = ?`, [id]);
-  
-  return deleted;
-}
+    this: new (entity: I) => T,
+    id: number,
+  ): Promise<boolean> {
+    const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
+    const result = await db.execute(`DELETE FROM ${tableName} WHERE id = ?`, [
+      id,
+    ]);
+    return result.affectedRows > 0;
+  }
 
-static async deleteAll<T extends BaseEntity, I extends IBaseEntity>(
-  this: new (entity: I) => T
-): Promise<T[]> {
-  const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
-  
-  const result = await db.execute(`SELECT * FROM ${tableName}`);
-  const deleted = result.map((row: I) => new this(row));
-  
-  await db.execute(`DELETE FROM ${tableName}`);
-  
-  return deleted;
-}
+  static async deleteAll<T extends BaseEntity, I extends IBaseEntity>(
+    this: new (entity: I) => T,
+  ): Promise<T[]> {
+    const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
 
-static async deleteOne<T extends BaseEntity, I extends IBaseEntity>(
-  this: new (entity: I) => T,
-  conditions: Partial<I>
-): Promise<T | null> {
-  const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
-  const whereClause = Object.keys(conditions).map(k => `${k} = ?`).join(' AND ');
-  const values = Object.values(conditions);
-  
-  const result = await db.execute(`SELECT * FROM ${tableName} WHERE ${whereClause}`, values);
-  if (!result.length) return null;
-  
-  const deleted = new this(result[0]);
-  
-  await db.execute(`DELETE FROM ${tableName} WHERE ${whereClause}`, values);
-  
-  return deleted;
-}
+    const result = await db.execute(`SELECT * FROM ${tableName}`);
+    const deleted = result.map((row: I) => new this(row));
 
+    await db.execute(`DELETE FROM ${tableName}`);
+
+    return deleted;
+  }
+
+  static async deleteOne<T extends BaseEntity, I extends IBaseEntity>(
+    this: new (entity: I) => T,
+    conditions: Partial<I>,
+  ): Promise<number> {
+    const tableName = Reflect.getMetadata(TABLE_METADATA_KEY, this);
+    const whereClause = Object.keys(conditions)
+      .map((key) => `${key} = ?`)
+      .join(" AND ");
+    const result = await db.execute(
+      `DELETE FROM ${tableName} WHERE ${whereClause}`,
+      Object.values(conditions),
+    );
+    return result.affectedRows;
+  }
 }

@@ -1,8 +1,8 @@
 import { TABLE_METADATA_KEY } from "./table.decorator.js";
+import { Column, getColumns } from "./column.decorator.js";
 
 export interface IBaseEntity {
   id: number;
-
   createdAt: Date;
   createdBy: number;
   updatedAt: Date;
@@ -15,11 +15,19 @@ export interface PaginationOptions {
 }
 
 export abstract class BaseEntity implements IBaseEntity {
+  @Column()
   id: number;
 
+  @Column()
   createdAt: Date;
+
+  @Column()
   createdBy: number;
+
+  @Column()
   updatedAt: Date;
+
+  @Column()
   updatedBy: number;
 
   constructor(entity: IBaseEntity) {
@@ -35,20 +43,25 @@ export abstract class BaseEntity implements IBaseEntity {
   }
 
   async save(): Promise<void> {
+    const tableName = (this.constructor as typeof BaseEntity).getTableName();
+    const entries = Object.values(getColumns(this.constructor));
+
     if (!this.id) {
-      const keys = Object.keys(this);
-      const columns = keys.join(", ");
-      const values_placeholder = "?, ".repeat(keys.length).slice(0, -2);
-      const query = `INSERT INTO ${(this.constructor as typeof BaseEntity).getTableName()} (${columns}) VALUES (${values_placeholder})`;
-      await db.execute(query, Object.values(this));
+      const columns = entries.map((e) => e.name).join(", ");
+      const placeholders = entries.map(() => "?").join(", ");
+      const values = entries.map((e) => (this as any)[e.propertyKey]);
+
+      const query = `INSERT INTO ${tableName} (${columns}) VALUES (${placeholders})`;
+      await db.execute(query, values);
     } else {
-      const keys = Object.keys(this).filter((key) => key !== "id");
-      const setClause = keys.map((key) => `${key} = ?`).join(", ");
-      const query = `UPDATE ${(this.constructor as typeof BaseEntity).getTableName()} SET ${setClause} WHERE id = ?`;
-      await db.execute(query, [
-        ...Object.values(this).filter((_, index) => index !== 0),
+      const setClause = entries.map((e) => `${e.name} = ?`).join(", ");
+      const values = [
+        ...entries.map((e) => (this as any)[e.propertyKey]),
         this.id,
-      ]);
+      ];
+
+      const query = `UPDATE ${tableName} SET ${setClause} WHERE id = ?`;
+      await db.execute(query, values);
     }
   }
 

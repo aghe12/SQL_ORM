@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
     // File Layout
-    // "rootDir": "./src",
+    "rootDir": "./src",
     // "outDir": "./dist",
 
     // Environment Settings
-    "module": "nodenext",
+    "module": "esnext",
     "target": "esnext",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
     "types": ["node"],
 
     // Decorator Support
@@ -14,9 +17,10 @@
     "emitDecoratorMetadata": true,
 
     // Other Outputs
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
+    "sourceMap": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
 
     // Stricter Typechecking Options
     "noUncheckedIndexedAccess": true,

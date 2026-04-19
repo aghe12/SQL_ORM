@@ -1,17 +1,36 @@
 import type { IDatabaseDriver } from "../core/db.js";
+import { Client, Connection, type ConnectionConfig } from "pg";
 
 export class PostgreSqlDriver implements IDatabaseDriver {
-  connect(): Promise<void> {
-    console.log("[SIMULATING]: Connecting to MySQL database...");
-    return Promise.resolve();
+  client: Client | null = null;
+  connectionConfig: string | ConnectionConfig;
+
+  constructor(connectionConfig: string | ConnectionConfig) {
+    this.connectionConfig = connectionConfig;
   }
-  disconnect(): Promise<void> {
-    console.log("[SIMULATING]: Disconnecting from MySQL database...");
-    return Promise.resolve();
+  getUpsertQuery(tableName: string, columns: string[], conflictColumns: string[]): string {
+    throw new Error("Method not implemented.");
   }
-  execute(query: string, params?: any[]): Promise<any> {
-    console.log("[SIMULATING]: Executing query...", query, params);
-    return Promise.resolve();
+
+  async connect(): Promise<void> {
+    if (this.client) {
+      return;
+    }
+    this.client = new Client(this.connectionConfig);
+    await this.client.connect();
+  }
+  async disconnect(): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+    await this.client.end();
+  }
+
+  async execute(query: string, params?: any[]): Promise<any> {
+    if (!this.client) {
+      return;
+    }
+    return await this.client.query(query, params);
   }
 
   getPlaceholderPrefix(): string {
@@ -26,33 +45,47 @@ export class PostgreSqlDriver implements IDatabaseDriver {
       .join(", ");
     return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`;
   }
+
+  getWhereStatement(
+    conditions: Record<string, unknown> | undefined,
+    index: number,
+  ): string {
+    const conditionPlaceHolder = conditions
+      ? Object.keys(conditions)
+          .map((condition) => {
+            return `${condition} = ${this.getNumberedPlaceholder(index++)}`;
+          })
+          .join(" AND ")
+      : "";
+    return conditions && Object.keys(conditions).length > 0
+      ? ` WHERE ${conditionPlaceHolder}`
+      : "";
+  }
+
+  getLimitStatement(limit?: number): string {
+    return limit ? ` LIMIT ${limit}` : "";
+  }
+
+  getOffsetStatement(offset?: number): string {
+    return offset ? `OFFSET ${offset}` : "";
+  }
+
   getUpdateQuery(
     tableName: string,
     columns: string[],
     conditions: Record<string, unknown>,
   ): string {
-    console.log(
-      "[SIMULATING]: Updating query...",
-      tableName,
-      columns,
-      conditions,
-    );
-    return "";
+    let index = 1;
+    const columnPlaceholders = columns
+      .map((column) => `${column} = ${this.getNumberedPlaceholder(index++)}`)
+      .join(", ");
+    return `UPDATE ${tableName} SET ${columnPlaceholders}${this.getWhereStatement(conditions, index)}`;
   }
   getDeleteQuery(
     tableName: string,
     conditions: Record<string, unknown>,
-    limit?: number,
-    offset?: number,
   ): string {
-    console.log(
-      "[SIMULATING]: Deleting query...",
-      tableName,
-      conditions,
-      limit,
-      offset,
-    );
-    return "";
+    return `DELETE FROM ${tableName}${this.getWhereStatement(conditions, 1)}`;
   }
   getSelectQuery(
     tableName: string,
@@ -61,21 +94,15 @@ export class PostgreSqlDriver implements IDatabaseDriver {
     limit?: number,
     offset?: number,
   ): string {
-    console.log(
-      "[SIMULATING]: Selecting query...",
-      tableName,
-      columns,
-      conditions,
-      limit,
-      offset,
-    );
-    return "";
+    return `SELECT ${columns.join(", ")}
+FROM ${tableName}${this.getWhereStatement(conditions, 1)}${this.getLimitStatement(limit)}${this.getOffsetStatement(offset)}`;
   }
+
   getCountQuery(
     tableName: string,
     conditions?: Record<string, unknown>,
   ): string {
-    console.log("[SIMULATING]: Counting query...", tableName, conditions);
-    return "";
+    return `SELECT COUNT(*) 
+FROM ${tableName}${this.getWhereStatement(conditions, 1)}`;
   }
 }

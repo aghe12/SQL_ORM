@@ -1,108 +1,195 @@
-import type { IDatabaseDriver } from "../core/db.js";
-import { Client, Connection, type ConnectionConfig } from "pg";
+import type { DatabaseDriverResult, IDatabaseDriver } from "../core/db.js";
+import { Client, type ClientConfig } from "pg";
 
 export class PostgreSqlDriver implements IDatabaseDriver {
-  client: Client | null = null;
-  connectionConfig: string | ConnectionConfig;
+  private client: Client | null = null;
+  private config: string | ClientConfig;
 
-  constructor(connectionConfig: string | ConnectionConfig) {
-    this.connectionConfig = connectionConfig;
+  constructor(config: string | ClientConfig) {
+    this.config = config;
   }
-  getUpsertQuery(tableName: string, columns: string[], conflictColumns: string[]): string {
-    throw new Error("Method not implemented.");
-  }
-
-  async connect(): Promise<void> {
-    if (this.client) {
-      return;
-    }
-    this.client = new Client(this.connectionConfig);
-    await this.client.connect();
-  }
-  async disconnect(): Promise<void> {
-    if (!this.client) {
-      return;
-    }
-    await this.client.end();
-  }
-
-  async execute(query: string, params?: any[]): Promise<any> {
-    if (!this.client) {
-      return;
-    }
-    return await this.client.query(query, params);
-  }
-
   getPlaceholderPrefix(): string {
     return "$";
   }
-  getNumberedPlaceholder(index: number): string {
-    return `${this.getPlaceholderPrefix()}${index}`;
+
+  async connect(): Promise<void> {
+    if (this.client) return;
+
+    this.client = new Client(this.config);
+    await this.client.connect();
+
+    // check connection
+    await this.client.query("SELECT 1");
   }
+
+  async disconnect(): Promise<void> {
+    if (!this.client) return;
+
+    await this.client.end();
+    this.client = null;
+  }
+
+  async execute(
+    query: string,
+    params: unknown[] = []
+  ): Promise<DatabaseDriverResult> {
+    if (!this.client) {
+      throw new Error("Database not connected");
+    }
+
+    const result = await this.client.query(query, params);
+
+    const rows = result.rows as Record<string, unknown>[];
+    const affectedRows = result.rowCount ?? 0;
+
+    const insertedId =
+      rows.length > 0 && rows[0] && typeof rows[0].id === "number"
+        ? (rows[0].id as number)
+        : undefined;
+
+    return {
+      rows,
+      affectedRows,
+      ...(insertedId !== undefined ? { insertedId } : {}),
+    };
+  }
+
+  private getPlaceholder(index: number): string {
+    return `$${index}`;
+  }
+
+  private buildWhereClause(
+    conditions?: Record<string, unknown>,
+    startIndex: number = 1
+  ): { clause: string; nextIndex: number } {
+    if (!conditions || Object.keys(conditions).length === 0) {
+      return { clause: "", nextIndex: startIndex };
+    }
+
+    let index = startIndex;
+
+    const clause =
+      " WHERE " +
+      Object.keys(conditions)
+        .map((key) => `${key} = ${this.getPlaceholder(index++)}`)
+        .join(" AND ");
+
+    return { clause, nextIndex: index };
+  }
+
   getInsertQuery(tableName: string, columns: string[]): string {
     const placeholders = columns
-      .map((_, i) => this.getNumberedPlaceholder(i + 1))
+      .map((_, i) => this.getPlaceholder(i + 1))
       .join(", ");
-    return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`;
+
+    return `INSERT INTO ${tableName} (${columns.join(
+      ", "
+    )}) VALUES (${placeholders}) RETURNING *`;
   }
 
-  getWhereStatement(
-    conditions: Record<string, unknown> | undefined,
-    index: number,
+  getUpsertQuery(
+    tableName: string,
+    columns: string[],
+    conflictColumns: string[]
   ): string {
-    const conditionPlaceHolder = conditions
-      ? Object.keys(conditions)
-          .map((condition) => {
-            return `${condition} = ${this.getNumberedPlaceholder(index++)}`;
-          })
-          .join(" AND ")
-      : "";
-    return conditions && Object.keys(conditions).length > 0
-      ? ` WHERE ${conditionPlaceHolder}`
-      : "";
-  }
+    const placeholders = columns
+      .map((_, i) => this.getPlaceholder(i + 1))
+      .join(", ");
 
-  getLimitStatement(limit?: number): string {
-    return limit ? ` LIMIT ${limit}` : "";
-  }
+    const updateColumns = columns.filter(
+      (col) => !conflictColumns.includes(col)
+    );
 
-  getOffsetStatement(offset?: number): string {
-    return offset ? `OFFSET ${offset}` : "";
+    const updateClause =
+      updateColumns.length > 0
+        ? `DO UPDATE SET ${updateColumns
+            .map((col) => `${col} = EXCLUDED.${col}`)
+            .join(", ")}`
+        : "DO NOTHING";
+
+    return `INSERT INTO ${tableName} (${columns.join(
+      ", "
+    )}) VALUES (${placeholders}) ON CONFLICT (${conflictColumns.join(
+      ", "
+    )}) ${updateClause} RETURNING *`;
   }
 
   getUpdateQuery(
     tableName: string,
     columns: string[],
-    conditions: Record<string, unknown>,
+    conditions: Record<string, unknown>
   ): string {
+    if (!conditions || Object.keys(conditions).length === 0) {
+      throw new Error("Update requires conditions");
+    }
+
     let index = 1;
-    const columnPlaceholders = columns
-      .map((column) => `${column} = ${this.getNumberedPlaceholder(index++)}`)
+
+    const setClause = columns
+      .map((col) => `${col} = ${this.getPlaceholder(index++)}`)
       .join(", ");
-    return `UPDATE ${tableName} SET ${columnPlaceholders}${this.getWhereStatement(conditions, index)}`;
+
+    const { clause } = this.buildWhereClause(conditions, index);
+
+    return `UPDATE ${tableName} SET ${setClause}${clause} RETURNING *`;
   }
+
   getDeleteQuery(
     tableName: string,
     conditions: Record<string, unknown>,
+    limit?: number,
+    offset?: number
   ): string {
-    return `DELETE FROM ${tableName}${this.getWhereStatement(conditions, 1)}`;
+    if (!conditions || Object.keys(conditions).length === 0) {
+      throw new Error("Delete requires conditions");
+    }
+
+    const where = Object.keys(conditions)
+      .map((key, i) => `${key} = ${this.getPlaceholder(i + 1)}`)
+      .join(" AND ");
+
+    // PostgreSQL safe delete with limit
+    if (limit !== undefined) {
+      const offsetClause = offset !== undefined ? ` OFFSET ${offset}` : "";
+
+      return `DELETE FROM ${tableName}
+WHERE ctid IN (
+  SELECT ctid FROM ${tableName} WHERE ${where} LIMIT ${limit}${offsetClause}
+)
+RETURNING *`;
+    }
+
+    return `DELETE FROM ${tableName} WHERE ${where} RETURNING *`;
   }
+
   getSelectQuery(
     tableName: string,
     columns: string[],
     conditions?: Record<string, unknown>,
     limit?: number,
-    offset?: number,
+    offset?: number
   ): string {
-    return `SELECT ${columns.join(", ")}
-FROM ${tableName}${this.getWhereStatement(conditions, 1)}${this.getLimitStatement(limit)}${this.getOffsetStatement(offset)}`;
+    const { clause } = this.buildWhereClause(conditions);
+
+    let query = `SELECT ${columns.join(", ")} FROM ${tableName}${clause}`;
+
+    if (limit !== undefined) {
+      query += ` LIMIT ${limit}`;
+    }
+
+    if (offset !== undefined) {
+      query += ` OFFSET ${offset}`;
+    }
+
+    return query;
   }
 
   getCountQuery(
     tableName: string,
-    conditions?: Record<string, unknown>,
+    conditions?: Record<string, unknown>
   ): string {
-    return `SELECT COUNT(*) 
-FROM ${tableName}${this.getWhereStatement(conditions, 1)}`;
+    const { clause } = this.buildWhereClause(conditions);
+
+    return `SELECT COUNT(*) AS count FROM ${tableName}${clause}`;
   }
 }

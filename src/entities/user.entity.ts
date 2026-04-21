@@ -1,8 +1,9 @@
-import { BaseEntity, type IBaseEntity } from "./base.entity.js";
-import { Table, TABLE_METADATA_KEY } from "./table.decorator.js";
+import { BaseEntity, type IBaseEntity } from "../core/base.entity.js";
+import { Column } from "../core/column.decorator.js";
+import { Table } from "../core/table.decorator.js";
 
 
-export interface IUser extends IBaseEntity {
+export interface IUser extends IBaseEntity{
     name: string;
     address: string;
     dob: Date;
@@ -12,10 +13,15 @@ export interface IUser extends IBaseEntity {
 @Table('users')
 export class User extends BaseEntity implements IUser {
 
+    @Column()
     name: string;
+    @Column()
     address: string;
+    @Column()
     dob: Date;
+    @Column()
     email: string;
+
 
     constructor(user: IUser) {
         super(user);

@@ -93,24 +93,50 @@ export abstract class BaseEntity implements IBaseEntity {
         await this.reloadCurrentState(tableName, proto);
     }
     /* 
-    CHANGES MADE:
-    1. Added getTableName() static method to centralize table name retrieval
-    2. Uses reflection metadata to get table name from @Table decorator
-    3. This makes the code more maintainable and consistent across all static methods
-    4. Eliminates duplicate Reflect.getMetadata calls throughout the class
-    */
-  static getTableName(): string {
-    return Reflect.getMetadata(TABLE_METADATA_KEY, this);
+CHANGES MADE:
+1. Added getTableName() static method to centralize table name retrieval
+2. Uses reflection metadata to get table name from @Table decorator
+3. This makes the code more maintainable and consistent across all static methods
+4. Eliminates duplicate Reflect.getMetadata calls throughout the class
+*/
+static getTableName(): string {
+  return Reflect.getMetadata(TABLE_METADATA_KEY, this);
+}
+
+/* 
+CHANGES MADE:
+1. Added escapeIdentifier function to wrap table/column names in quotes
+2. This prevents SQL errors when using reserved keywords as identifiers
+3. Different databases use different quote characters (MySQL uses backticks, PostgreSQL uses double quotes)
+4. WHAT IT DOES: Escapes database identifiers to prevent conflicts with SQL keywords
+5. WHY: Ensures table/column names like 'order', 'group', 'user' work correctly
+6. IMPORTANT: This is crucial for production databases with complex naming conventions
+*/
+static escapeIdentifier(identifier: string, driverType: 'mysql' | 'postgresql' = 'postgresql'): string {
+  if (!identifier || identifier.trim() === '') {
+    throw new Error('Identifier cannot be empty');
   }
+  
+  // Remove any existing quotes to prevent double-escaping
+  const cleanIdentifier = identifier.replace(/[`""]/g, '');
+  
+  // Use appropriate quote character based on database type
+  const quote = driverType === 'mysql' ? '`' : '"';
+  return `${quote}${cleanIdentifier}${quote}`;
+}
 
   /* 
   CHANGES MADE:
-  1. Replaced mapPropertyKeysToDbColumns with buildDbConditions
-  2. Returns object with both dbConditions (mapped column names) and values array
-  3. Provides better type safety and error handling
-  4. Throws descriptive error for unknown columns instead of silently ignoring them
-  5. Separates column mapping from value extraction for cleaner code
-  6. Essential for parameterized queries to prevent SQL injection
+  1. Extended buildDbConditions to support multiple operators (=, >, <, >=, <=, !=, LIKE, IN, NOT IN, IS NULL, IS NOT NULL)
+  2. Added support for complex conditions like { "age>": 18, "name LIKE": "%john%", "status IN": ["active", "pending"] }
+  3. Returns object with both dbConditions (mapped column names with operators) and values array
+  4. Provides better type safety and error handling
+  5. Throws descriptive error for unknown columns instead of silently ignoring them
+  6. Separates column mapping from value extraction for cleaner code
+  7. Essential for parameterized queries to prevent SQL injection
+  8. WHAT IT DOES: Parses complex conditions with operators and prepares them for SQL query building
+  9. WHY: Enables more flexible and powerful database queries beyond simple equality
+  10. IMPORTANT: This is the foundation for advanced query capabilities
   */
   static buildDbConditions<T extends BaseEntity, I extends IBaseEntity>(
     this: abstract new (entity: I) => T,
@@ -120,14 +146,43 @@ export abstract class BaseEntity implements IBaseEntity {
     const values: unknown[] = [];
     const proto = this.prototype as object;
     const entries = Object.entries(conditions || {});
+    
     for (const [key, value] of entries) {
-      const meta = getColumnSqlName(proto, key);
-      if (!meta.dbColumnName) {
-        throw new Error(`Unknown column: ${key}`);
+      // Parse operator from key (e.g., "age>" becomes column "age" with operator ">")
+      const operatorMatch = key.match(/^(.+?)(>=|<=|!=|<>|>|<|=| LIKE | NOT LIKE | IN | NOT IN | IS | IS NOT )$/i);
+      
+      if (operatorMatch) {
+        const [, columnName, operator] = operatorMatch;
+        if (!columnName || !operator) {
+          throw new Error(`Invalid condition format: ${key}`);
+        }
+        
+        const meta = getColumnSqlName(proto, columnName.trim());
+        if (!meta.dbColumnName) {
+          throw new Error(`Unknown column: ${columnName}`);
+        }
+        
+        const columnWithOperator = `${meta.dbColumnName} ${operator.trim()}`;
+        dbConditions[columnWithOperator] = value;
+        
+        // Handle IN/NOT IN arrays
+        if (operator.toUpperCase().includes('IN') && Array.isArray(value)) {
+          values.push(...value);
+        } else if (!operator.toUpperCase().includes('IS')) {
+          // Don't add values for IS NULL/IS NOT NULL
+          values.push(value);
+        }
+      } else {
+        // Default to equals operator
+        const meta = getColumnSqlName(proto, key);
+        if (!meta.dbColumnName) {
+          throw new Error(`Unknown column: ${key}`);
+        }
+        dbConditions[meta.dbColumnName] = value;
+        values.push(value);
       }
-      dbConditions[meta.dbColumnName] = value;
-      values.push(value);
     }
+    
     return { dbConditions: dbConditions, values: values };
   }
 

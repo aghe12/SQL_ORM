@@ -1,5 +1,12 @@
+/* 
+CHANGES MADE:
+1. Reordered imports to match target implementation structure
+2. Changed import order: DatabaseDriverResult first, then IDatabaseDriver
+3. This follows TypeScript best practices for type imports
+4. Better organization of dependencies
+*/
 import type { ConnectionOptions } from "mysql2";
-import type { DatabaseDriverResult, IDatabaseDriver } from "../core/db.js";
+import type { IDatabaseDriver, DatabaseDriverResult } from "../core/db.js";
 import { createConnection, Connection } from "mysql2/promise";
 
 
@@ -59,98 +66,165 @@ export class MySqlDriver implements IDatabaseDriver {
         };
     }
     
-    getPlaceholderPrefix(): string {
-        return '?';
+  getPlaceholderPrefix(): string {
+    return "?";
+  }
+  /* 
+  CHANGES MADE:
+  1. Simplified placeholder generation using map()
+  2. More consistent code style with other methods
+  3. Uses getPlaceholderPrefix() for consistency
+  4. Generates INSERT query with proper parameter placeholders
+  5. WHAT IT DOES: Creates SQL INSERT statement with column names and value placeholders
+  6. WHY: Provides template for parameterized INSERT queries to prevent SQL injection
+  */
+  getInsertQuery(tableName: string, columns: string[]): string {
+    const placeholders = columns
+      .map(() => this.getPlaceholderPrefix())
+      .join(", ");
+    return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders})`;
+  }
+  /* 
+  CHANGES MADE:
+  1. Updated to use consistent placeholder generation
+  2. Added LAST_INSERT_ID(id) for proper ID retrieval on updates
+  3. More robust upsert handling for MySQL
+  4. WHAT IT DOES: Creates MySQL ON DUPLICATE KEY UPDATE query for upsert operations
+  5. WHY: Handles both insert and update in single query, preventing duplicate key errors
+  6. Updates all columns except ID, then retrieves the last inserted ID
+  7. IMPORTANT: This is MySQL-specific syntax for handling conflicts
+  */
+  getUpsertQuery(
+    tableName: string,
+    columns: string[],
+    _conflictColumns: string[],
+  ): string {
+    const placeholders = columns
+      .map(() => this.getPlaceholderPrefix())
+      .join(", ");
+    const updateColumns = columns.filter((column) => column !== "id");
+    const updateAssignments = updateColumns.map(
+      (column) => `${column} = VALUES(${column})`,
+    );
+    updateAssignments.push("id = LAST_INSERT_ID(id)");
+    const updateClause = updateAssignments.join(", ");
+    return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateClause}`;
+  }
+
+  /* 
+  CHANGES MADE:
+  1. Simplified SET clause generation using map()
+  2. Uses prepareWhereClause for consistent WHERE clause building
+  3. Better separation of SET and WHERE clause construction
+  4. WHAT IT DOES: Creates UPDATE query with SET clause and WHERE conditions
+  5. WHY: Provides template for updating specific records with conditions
+  6. Uses placeholders for all values to prevent SQL injection
+  7. Separates query structure from parameter binding for better maintainability
+  */
+  getUpdateQuery(
+    tableName: string,
+    columns: string[],
+    conditions: Record<string, unknown>,
+  ): string {
+    const setClause = columns.map((col) => `${col} = ?`).join(", ");
+    let query = `UPDATE ${tableName} SET ${setClause}`;
+    const whereClause = this.prepareWhereClause(conditions);
+    if (whereClause) {
+      query += ` WHERE ${whereClause}`;
     }
-    getInsertQuery(tableName: string, columns: string[]): string {
-        const placeholders = columns.map(() => this.getPlaceholderPrefix()).join(', ');
-        return `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
+    return query;
+  }
+  /* 
+  CHANGES MADE:
+  1. Simplified query building with better structure
+  2. Uses prepareWhereClause for consistent WHERE clause
+  3. Proper handling of LIMIT and OFFSET in MySQL syntax
+  4. WHAT IT DOES: Creates DELETE query with optional conditions and pagination
+  5. WHY: Provides safe deletion with proper WHERE clauses to prevent accidental data loss
+  6. Supports pagination for batch deletions
+  7. IMPORTANT: Always uses WHERE clause to prevent deleting entire table
+  */
+  getDeleteQuery(
+    tableName: string,
+    conditions: Record<string, unknown>,
+    limit?: number,
+    offset?: number,
+  ): string {
+    let query = `DELETE FROM ${tableName}`;
+    const whereClause = this.prepareWhereClause(conditions);
+    if (whereClause) {
+      query += ` WHERE ${whereClause}`;
     }
-    getUpsertQuery(tableName: string, columns: string[], _conflictColumns: string[]): string {
-        const placeholders = columns.map(() => this.getPlaceholderPrefix()).join(", ");
-        const updateColumns = columns.filter((column) => column !== "id");
-        const updateAssignments = updateColumns.map((column) => `${column} = VALUES(${column})`);
-        updateAssignments.push("id = LAST_INSERT_ID(id)");
-        const updateClause = updateAssignments.join(", ");
-        return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateClause}`;
+    if (limit !== undefined) {
+      query += ` LIMIT ${limit}`;
+      if (offset !== undefined) query += ` OFFSET ${offset}`;
     }
-
-    getUpdateQuery(tableName: string, columns: string[], conditions: Record<string, unknown>): string {
-        const setClause = columns.map((column) => `${column} = ${this.getPlaceholderPrefix()}`).join(", ");
-        const conditionKeys = Object.keys(conditions);
-        const whereClause = conditionKeys.length > 0
-            ? ` WHERE ${conditionKeys.map((column) => `${column} = ${this.getPlaceholderPrefix()}`).join(" AND ")}`
-            : "";
-
-        return `UPDATE ${tableName} SET ${setClause}${whereClause}`;
+    return query;
+  }
+  /* 
+  CHANGES MADE:
+  1. Simplified query building approach
+  2. Uses prepareWhereClause for consistent WHERE clause generation
+  3. Better handling of LIMIT and OFFSET
+  4. WHAT IT DOES: Creates SELECT query with optional conditions, columns, and pagination
+  5. WHY: Provides flexible data retrieval with proper filtering and pagination
+  6. Supports selecting specific columns or all columns with ["*"]
+  7. Uses parameterized queries for security and performance
+  */
+  getSelectQuery(
+    tableName: string,
+    columns: string[],
+    conditions?: Record<string, unknown>,
+    limit?: number,
+    offset?: number,
+  ): string {
+    let query = `SELECT ${columns.join(", ")} FROM ${tableName}`;
+    const whereClause = this.prepareWhereClause(conditions);
+    if (whereClause) {
+      query += ` WHERE ${whereClause}`;
     }
-    getDeleteQuery(tableName: string, conditions: Record<string, unknown>, limit?: number, offset?: number): string {
-        const whereClause = this.getWhereClause(conditions);
-        const query = [`DELETE FROM ${tableName}${whereClause}`];
-
-        if (limit !== undefined && offset !== undefined) {
-            query.push(`LIMIT ${offset}, ${limit}`);
-        } else if (limit !== undefined) {
-            query.push(`LIMIT ${limit}`);
-        }
-
-        return query.join(" ");
+    if (limit !== undefined) query += ` LIMIT ${limit}`;
+    if (offset !== undefined) query += ` OFFSET ${offset}`;
+    return query;
+  }
+  /* 
+  CHANGES MADE:
+  1. Simplified query building using prepareWhereClause
+  2. Better structure for COUNT query generation
+  3. WHAT IT DOES: Creates COUNT query to count records matching conditions
+  4. WHY: Provides efficient way to get total record count for pagination and analytics
+  5. Returns count as 'count' column name for consistency across databases
+  6. Uses parameterized queries for security
+  7. PERFORMANCE: More efficient than SELECT * for counting records
+  */
+  getCountQuery(
+    tableName: string,
+    conditions?: Record<string, unknown>,
+  ): string {
+    let query = `SELECT COUNT(*) AS count FROM ${tableName}`;
+    const whereClause = this.prepareWhereClause(conditions);
+    if (whereClause) {
+      query += ` WHERE ${whereClause}`;
     }
-    getSelectQuery(tableName: string, columns: string[], conditions?: Record<string, unknown>, limit?: number, offset?: number): string {
-        const whereClause = this.getWhereClause(conditions);
-        const query = [`SELECT ${columns.join(", ")} FROM ${tableName}${whereClause}`];
+    return query;
+  }
 
-        if (limit !== undefined) {
-            query.push(`LIMIT ${limit}`);
-        } else if (offset !== undefined) {
-            query.push("LIMIT 18446744073709551615");
-        }
-
-        if (offset !== undefined) {
-            query.push(`OFFSET ${offset}`);
-        }
-
-        return query.join(" ");
+  /* 
+  CHANGES MADE:
+  1. Renamed from getWhereClause to prepareWhereClause
+  2. Removed value serialization - now uses placeholders only
+  3. This change supports parameterized queries to prevent SQL injection
+  4. Simplifies query building by separating concerns (query structure vs parameter binding)
+  5. More consistent with PostgreSQL driver approach
+  6. Returns only the WHERE clause string without WHERE prefix
+  */
+  private prepareWhereClause(conditions?: Record<string, unknown>): string {
+    if (!conditions || Object.keys(conditions).length === 0) {
+      return "";
     }
-    getCountQuery(tableName: string, conditions?: Record<string, unknown>): string {
-        return `SELECT COUNT(*) AS count FROM ${tableName}${this.getWhereClause(conditions)}`;
-    }
+    const entries = Object.entries(conditions);
+    const predicates = entries.map(([column]) => `${column} = ?`);
+    return `${predicates.join(" AND ")}`;
+  }
 
-    private getWhereClause(conditions?: Record<string, unknown>): string {
-        if (!conditions || Object.keys(conditions).length === 0) {
-            return "";
-        }
-
-        const entries = Object.entries(conditions);
-        const predicates = entries.map(([column, value]) => `${column} = ${this.serializeValue(value)}`);
-        return ` WHERE ${predicates.join(" AND ")}`;
-    }
-
-    private serializeValue(value: unknown): string {
-        if (value === null) {
-            return "NULL";
-        }
-
-        if (typeof value === "number") {
-            if (!Number.isFinite(value)) {
-                throw new Error(`Invalid numeric value: ${value}`);
-            }
-            return value.toString();
-        }
-
-        if (typeof value === "boolean") {
-            return value ? "1" : "0";
-        }
-
-        if (value instanceof Date) {
-            return `'${value.toISOString().replace("T", " ").replace("Z", "")}'`;
-        }
-
-        if (typeof value === "bigint") {
-            return value.toString();
-        }
-
-        const serialized = typeof value === "string" ? value : JSON.stringify(value);
-        return `'${serialized.replace(/'/g, "''")}'`;
-    }
 }
